@@ -2,7 +2,7 @@
 
 import os
 from pinecone import Pinecone, ServerlessSpec
-from langchain_pinecone import PineconeVectorStore
+from langchain_pinecone.vectorstores import PineconeVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings # Changed to HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 

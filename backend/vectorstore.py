@@ -1,9 +1,10 @@
 # rag_agent_app/backend/vectorstore.py
 
 import os
-from langchain.vectorstores import Pinecone
-from langchain.embeddings import HuggingFaceEmbeddings  # updated import
+from langchain_pinecone import Pinecone
+from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 
 # Import API key from config
 from config import PINECONE_API_KEY

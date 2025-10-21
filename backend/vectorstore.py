@@ -2,7 +2,7 @@
 
 import os
 from langchain_pinecone import Pinecone
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 

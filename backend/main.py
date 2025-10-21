@@ -11,10 +11,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_community.document_loaders import PyPDFLoader
 
-
-
-from .agent import rag_agent
-from .vectorstore import add_document_to_vectorstore
+from agent import rag_agent
+from vectorstore import add_document_to_vectorstore
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -34,19 +32,23 @@ class TraceEvent(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict)
     event_type: str
 
+
 class QueryRequest(BaseModel):
     session_id: str
     query: str
-    enable_web_search: bool = True # NEW: Add web search toggle state
+    enable_web_search: bool = True  # NEW: Add web search toggle state
+
 
 class AgentResponse(BaseModel):
     response: str
     trace_events: List[TraceEvent] = Field(default_factory=list)
 
+
 class DocumentUploadResponse(BaseModel):
     message: str
     filename: str
     processed_chunks: int
+
 
 # --- Document Upload Endpoint ---
 @app.post("/upload-document/", response_model=DocumentUploadResponse, status_code=status.HTTP_200_OK)
@@ -64,7 +66,7 @@ async def upload_document(file: UploadFile = File(...)):
         file_content = await file.read()
         tmp_file.write(file_content)
         temp_file_path = tmp_file.name
-    
+
     print(f"Received PDF for upload: {file.filename}. Saved temporarily to {temp_file_path}")
 
     try:
@@ -76,7 +78,7 @@ async def upload_document(file: UploadFile = File(...)):
             full_text_content = "\n\n".join([doc.page_content for doc in documents])
             add_document_to_vectorstore(full_text_content)
             total_chunks_added = len(documents)
-        
+
         return DocumentUploadResponse(
             message=f"PDF '{file.filename}' successfully uploaded and indexed.",
             filename=file.filename,
@@ -94,14 +96,12 @@ async def upload_document(file: UploadFile = File(...)):
             print(f"Cleaned up temporary file: {temp_file_path}")
 
 
-
 # --- Chat Endpoint ---
 @app.post("/chat/", response_model=AgentResponse)
 async def chat_with_agent(request: QueryRequest):
     trace_events_for_frontend: List[TraceEvent] = []
-    
+
     try:
-        # Pass enable_web_search into the config for the agent to access
         config = {
             "configurable": {
                 "thread_id": request.session_id,
@@ -111,9 +111,9 @@ async def chat_with_agent(request: QueryRequest):
         inputs = {"messages": [HumanMessage(content=request.query)]}
 
         final_message = ""
-        
+
         print(f"--- Starting Agent Stream for session {request.session_id} ---")
-        print(f"Web Search Enabled: {request.enable_web_search}") # For server-side debugging
+        print(f"Web Search Enabled: {request.enable_web_search}")
 
         for i, s in enumerate(rag_agent.stream(inputs, config=config)):
             current_node_name = None
@@ -123,7 +123,7 @@ async def chat_with_agent(request: QueryRequest):
                 current_node_name = '__end__'
                 node_output_state = s['__end__']
             else:
-                current_node_name = list(s.keys())[0] 
+                current_node_name = list(s.keys())[0]
                 node_output_state = s[current_node_name]
 
             event_description = f"Executing node: {current_node_name}"
@@ -132,7 +132,6 @@ async def chat_with_agent(request: QueryRequest):
 
             if current_node_name == "router":
                 route_decision = node_output_state.get('route')
-                # Check for overridden route if web search was disabled
                 initial_decision = node_output_state.get('initial_router_decision', route_decision)
                 override_reason = node_output_state.get('router_override_reason', None)
 
@@ -143,27 +142,29 @@ async def chat_with_agent(request: QueryRequest):
                     event_description = f"Router decided: '{route_decision}'"
                     event_details = {"decision": route_decision, "reason": "Based on initial query analysis."}
                 event_type = "router_decision"
+
             elif current_node_name == "rag_lookup":
                 rag_content_summary = node_output_state.get("rag", "")[:200] + "..."
-                
-                rag_sufficient = node_output_state.get("route") == "answer" 
-                
+                rag_sufficient = node_output_state.get("route") == "answer"
+
                 if rag_sufficient:
                     event_description = f"RAG Lookup performed. Content found and deemed sufficient. Proceeding to answer."
                     event_details = {"retrieved_content_summary": rag_content_summary, "sufficiency_verdict": "Sufficient"}
                 else:
                     event_description = f"RAG Lookup performed. Content NOT sufficient. Diverting to web search."
                     event_details = {"retrieved_content_summary": rag_content_summary, "sufficiency_verdict": "Not Sufficient"}
-                
                 event_type = "rag_action"
+
             elif current_node_name == "web_search":
                 web_content_summary = node_output_state.get("web", "")[:200] + "..."
                 event_description = f"Web Search performed. Results retrieved. Proceeding to answer."
                 event_details = {"retrieved_content_summary": web_content_summary}
                 event_type = "web_action"
+
             elif current_node_name == "answer":
                 event_description = "Generating final answer using gathered context."
                 event_type = "answer_generation"
+
             elif current_node_name == "__end__":
                 event_description = "Agent process completed."
                 event_type = "process_end"
@@ -179,24 +180,22 @@ async def chat_with_agent(request: QueryRequest):
             )
             print(f"Streamed Event: Step {i+1} - Node: {current_node_name} - Desc: {event_description}")
 
-        # Get the final state from the last yielded item in the stream
         final_actual_state_dict = None
         if s:
             if '__end__' in s:
                 final_actual_state_dict = s['__end__']
-            else:
-                if list(s.keys()):
-                    final_actual_state_dict = s[list(s.keys())[0]]
+            elif list(s.keys()):
+                final_actual_state_dict = s[list(s.keys())[0]]
 
         if final_actual_state_dict and "messages" in final_actual_state_dict:
             for msg in reversed(final_actual_state_dict["messages"]):
                 if isinstance(msg, AIMessage):
                     final_message = msg.content
                     break
-        
+
         if not final_message:
-             print("Agent finished, but no final AIMessage found in the final state after stream completion.")
-             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Agent did not return a valid response (final AI message not found).")
+            print("Agent finished, but no final AIMessage found in the final state after stream completion.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Agent did not return a valid response (final AI message not found).")
 
         print(f"--- Agent Stream Ended. Final Response: {final_message[:200]}... ---")
 
@@ -205,11 +204,25 @@ async def chat_with_agent(request: QueryRequest):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        error_details = f"Error during agent invocation: {e}"
-        print(error_details)
+        print(f"Error during agent invocation: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal Server Error: {e}")
-    
 
+
+# --- Health Check Endpoint ---
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+# --- Root Endpoint ---
+@app.get("/")
+async def root():
+    return {
+        "message": "🚀 LangGraph RAG Agent API is running!",
+        "endpoints": {
+            "upload_document": "/upload-document/",
+            "chat": "/chat/",
+            "health": "/health",
+            "docs": "/docs"
+        }
+    }
